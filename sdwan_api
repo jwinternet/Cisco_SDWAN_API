@@ -1,0 +1,410 @@
+#!/usr/bin/python3
+"""
+Cisco SD-WAN API Module
+"""
+###############################################################################
+
+__author__ = "Jared Winter"
+__copyright__ = "Copyright 2019, jwinternet"
+__credits__ = ""
+__license__ = "GNU GPL v3"
+__version__ = "0.4.1"
+__updated__ = "10/22/2019"
+__email__ = "jaredwinter2015@outlook.com"
+__contributors__ = ""
+__status__ = "PROD"
+
+###############################################################################
+
+import requests
+import sys
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+import statistics
+import re
+import time
+
+###############################################################################
+
+# Disable warnings like unsigned certificates, etc.
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+
+class rest_api_lib:
+	"""
+	Class for creating all basic functionality of a Cisco SD-WAN API call.
+	"""
+	def __init__(self, vmanage_ip, username, password):
+		"""
+		The first step in the initialization of the login process.
+
+		:param vmanage_ip: IP/URL of the vmanage specified (ex:
+		'cisco.vmanage.com')
+		:param username: The username used to access vmanage
+		:param password: The password used to access vmanage
+		"""
+		self.vmanage_ip = vmanage_ip
+		self.session = {}
+		self.login(self.vmanage_ip, username, password)
+
+	def login(self, vmanage_ip, username, password):
+		"""
+		The second step in the initialization of the login process.
+
+		:param vmanage_ip: The IP or URL of the vmanage specified (ex:
+		'cisco.vmanage.com')
+		:param username: The username used to access vmanage
+		:param password: The password used to access vmanage
+		"""
+		url = 'https://%s:8443/j_security_check' % vmanage_ip
+		payload = {'j_username': username, 'j_password': password}
+		sess = requests.session()
+		login_response = sess.post(
+				url=url,
+				data=payload,
+				verify=False,
+				timeout=10
+		)
+
+		if b'<html>' in login_response.content:
+			print("Login Failed")
+			sys.exit(0)
+
+		self.session[vmanage_ip] = sess
+
+	def get_request(self, mount_point):
+		"""
+		Performs a RESTful API call using the GET method.
+
+		:param mount_point: The specified end of the URL that will be used to
+		make the API call to retrieve information
+		:return data: Authentication has been completed and a reusable cookie
+		has been created for subsequent calls
+		"""
+		url = "https://%s:443/dataservice/%s" % (self.vmanage_ip, mount_point)
+		response = self.session[self.vmanage_ip].get(url,
+		                                             verify=False,
+		                                             timeout=10
+		).json()
+		data = response
+		return data
+
+###############################################################################
+
+def system_status(nodes, sdwan):
+	"""
+	Retrieves various dictionary keys for a specific device (or devices).
+
+	:param nodes: Refers to the device IP that information is being retrieved
+	for
+	:param sdwan: Calls the rest_api_lib class and the previously generated
+	cookie
+	"""
+	print("\nSystem Status:")
+	sys_status = ('device/system/status?deviceId=' + nodes)
+	response = (sdwan.get_request(sys_status))
+	items = response['data']
+	for item in items:
+		print("Hostname - " + item['vdevice-host-name'])
+		print("Device type - " + item['board_type'])
+		print("Clock - " + item['config_date/date-time-string'])
+		print("Last reboot type - " + item['reboot_type'])
+		print("Uptime - " + item['uptime'])
+
+def hardware_environment(nodes, sdwan):
+	"""
+	Retrieves various dictionary keys for a specific device (or devices).
+
+	:param nodes: Refers to the device IP that information is being retrieved
+	for
+	:param sdwan: Calls the rest_api_lib class and the previously generated
+	cookie
+	"""
+	hw_env = ('device/hardware/environment?deviceId=' + nodes)
+	response = (sdwan.get_request(hw_env))
+	items = response['data']
+	for item in items:
+		a_item = item['hw-item']
+		index = item['hw-dev-index']
+		status = item['status']
+		if 'Power supply' in a_item:
+			print("Power supply " + str(index) +
+			      " - " + status)
+		else:
+			continue
+
+def bfd_sessions(nodes, sdwan):
+	"""
+	Retrieves various dictionary keys for a specific device (or devices).
+
+	:param nodes: Refers to the device IP that information is being retrieved
+	for
+	:param sdwan: Calls the rest_api_lib class and the previously generated
+	cookie
+	"""
+	print("\nBFD Sessions:")
+	bfd_sess = ('device/bfd/sessions?deviceId=' + nodes + '&&&')
+	response = (sdwan.get_request(bfd_sess))
+	items = response['data']
+	for item in items:
+		color = item['local-color']
+		state = item['state']
+		uptime = item['uptime']
+		print(color + " - " + state + " - " + uptime)
+
+def app_route_stats(nodes, sdwan, index):
+	"""
+	Retrieves various dictionary keys for a specific device (or devices).
+
+	:param nodes: Refers to the device IP that information is being retrieved
+	for
+	:param sdwan: Calls the rest_api_lib class and the previously generated
+	cookie
+	:param index: Specifies which time interval to be selected (0 to 5,
+	blank equals 0 to 5 combined)
+	"""
+	print("\nApp-Route Stats:")
+	app_route = ('device/app-route/statistics?deviceId=' + nodes + '&&&')
+	response = (sdwan.get_request(app_route))
+	items = response['data']
+	public_internet_loss = []
+	public_internet_latency = []
+	public_internet_jitter = []
+	private1_loss = []
+	private1_latency = []
+	private1_jitter = []
+	private2_loss = []
+	private2_latency = []
+	private2_jitter = []
+	lte_loss = []
+	lte_latency = []
+	lte_jitter = []
+	for item in items:
+		if item['index'] == index:
+			color = item['local-color']
+			loss = int(item['loss'])
+			latency = int(item['average-latency'])
+			jitter = int(item['average-jitter'])
+			if color == "public-internet":
+				public_internet_loss.append(loss)
+				public_internet_latency.append(latency)
+				public_internet_jitter.append(jitter)
+			elif color == "private1":
+				private1_loss.append(loss)
+				private1_latency.append(latency)
+				private1_jitter.append(jitter)
+			elif color == "private2":
+				private2_loss.append(loss)
+				private2_latency.append(latency)
+				private2_jitter.append(jitter)
+			elif color == "lte":
+				lte_loss.append(loss)
+				lte_latency.append(latency)
+				lte_jitter.append(jitter)
+			else:
+				continue
+		else:
+			continue
+	if len(public_internet_loss) > 0:
+		print("\nBroadband Stats:")
+		broadband_loss = statistics.mean(public_internet_loss)
+		print("Loss: " + str(format(broadband_loss, '.2f')) + "%")
+		if float(broadband_loss) > 5:
+			print("\t***Loss is great than 5.00%, please open a ticket with "
+			      "the ISP!")
+		broadband_latency = statistics.mean(public_internet_latency)
+		print("Latency: " + str(format(broadband_latency, '.2f')) + "ms")
+		if float(broadband_latency) > 70:
+			print("\t***Latency is great than 70.00ms, please open a ticket "
+			      "with the ISP!")
+		broadband_jitter = statistics.mean(public_internet_jitter)
+		print("Jitter: " + str(format(broadband_jitter, '.2f')) + "ms")
+		if float(broadband_jitter) > 8:
+			print("\t***Jitter is great than 8.00ms, please open a ticket "
+			      "with the ISP!")
+
+	if len(private1_loss) > 0:
+		print("\nPrivate1 MPLS Stats:")
+		private1_loss = statistics.mean(private1_loss)
+		print("Loss: " + str(format(private1_loss, '.2f')) + "%")
+		if float(private1_loss) > 2:
+			print("\t***Loss is great than 2.00%, please open a ticket with "
+			      "the ISP!")
+		private1_latency = statistics.mean(private1_latency)
+		print("Latency: " + str(format(private1_latency, '.2f')) + "ms")
+		if float(private1_latency) > 70:
+			print("\t***Latency is great than 70.00ms, please open a ticket "
+			      "with the ISP!")
+		private1_jitter = statistics.mean(private1_jitter)
+		print("Jitter: " + str(format(private1_jitter, '.2f')) + "ms")
+		if float(private1_jitter) > 8:
+			print("\t***Jitter is great than 8.00ms, please open a ticket "
+			      "with the ISP!")
+
+	if len(private2_loss) > 0:
+		print("\nPrivate2 MPLS Stats:")
+		private2_loss = statistics.mean(private2_loss)
+		print("Loss: " + str(format(private2_loss, '.2f')) + "%")
+		if float(private2_loss) > 2:
+			print("\t***Loss is great than 2.00%, please open a ticket with "
+			      "the ISP!")
+		private2_latency = statistics.mean(private2_latency)
+		print("Latency: " + str(format(private2_latency, '.2f')) + "ms")
+		if float(private2_latency) > 70:
+			print("\t***Latency is great than 70.00ms, please open a ticket "
+			      "with the ISP!")
+		private2_jitter = statistics.mean(private2_jitter)
+		print("Jitter: " + str(format(private2_jitter, '.2f')) + "ms")
+		if float(private2_jitter) > 8:
+			print("\t***Jitter is great than 8.00ms, please open a ticket "
+			      "with the ISP!")
+
+	if len(lte_loss) > 0:
+		print("\nLTE Stats:")
+		lte_loss = statistics.mean(lte_loss)
+		print("Loss: " + str(format(lte_loss, '.2f')) + "%")
+		if float(lte_loss) > 5:
+			print("\t***Loss is great than 5.00%, please open a ticket with "
+			      "the ISP!")
+		lte_latency = statistics.mean(lte_latency)
+		print("Latency: " + str(format(lte_latency, '.2f')) + "ms")
+		if float(lte_latency) > 70:
+			print("\t***Latency is great than 70.00ms, please open a ticket "
+			      "with the ISP!")
+		lte_jitter = statistics.mean(lte_jitter)
+		print("Jitter: " + str(format(lte_jitter, '.2f')) + "ms")
+		if float(lte_jitter) > 8:
+			print("\t***Jitter is great than 8.00ms, please open a ticket "
+			      "with the ISP!")
+
+def interface_description(nodes, sdwan):
+	"""
+	Retrieves various dictionary keys for a specific device (or devices).
+
+	:param nodes: Refers to the device IP that information is being retrieved
+	for
+	:param sdwan: Calls the rest_api_lib class and the previously generated
+	cookie
+	"""
+	print("\nInterface Info:")
+	int_desc = ('device/interface?deviceId=' + nodes + '&&&')
+	response = (sdwan.get_request(int_desc))
+	items = response['data']
+	for item in items:
+		if 'desc' in item:
+			ifname = item['ifname']
+			status = item['if-oper-status']
+			desc = item['desc']
+			print(ifname + " = " + status + " - " + desc)
+		else:
+			continue
+
+def cpe_info(nodes, sdwan):
+	"""
+	Retrieves various dictionary keys for a specific device (or devices).
+
+	:param nodes: Refers to the device IP that information is being retrieved
+	for
+	:param sdwan: Calls the rest_api_lib class and the previously generated
+	cookie
+	"""
+	print("\nMAC Info:")
+	get_arp = ('device/arp?deviceId=' + nodes)
+	response = (sdwan.get_request(get_arp))
+	items = response['data']
+	for item in items:
+		if item['if-name'] == 'ge0/0':
+			ifname = item['if-name']
+			mac = item['mac']
+			uptime = item['uptime']
+			if '80:b7:09' not in mac:
+				print(ifname + " - " + mac + " - " + uptime)
+		elif item['if-name'] == 'ge0/1':
+			ifname = item['if-name']
+			mac = item['mac']
+			uptime = item['uptime']
+			if '80:b7:09' not in mac:
+				print(ifname + " - " + mac + " - " + uptime)
+		else:
+			continue
+
+
+def get_inventory(sdwan, choice):
+	"""
+	Retrieves various dictionary keys for a specific device (or devices).
+
+	:param sdwan: Calls the rest_api_lib class and the previously generated
+	cookie
+	:param choice: Specifies what the previously selected option in the
+	parent module
+	"""
+	get_inv = ('device')
+	response = (sdwan.get_request(get_inv))
+	items = response['data']
+	if choice == "1":
+		for item in items:
+			if item['reachability'] != 'reachable':
+				hostname = item['host-name']
+				reachability = item['reachability']
+				validity = item['validity']
+				system_ip = item['system-ip']
+				device_model = item['device-model']
+				device_groups = item['device-groups']
+				board_serial = item['board-serial']
+				uuid = item['uuid']
+				print(hostname)
+				print("\t" + str(validity))
+				print("\t" + str(reachability))
+				print("\t" + str(system_ip))
+				print("\t" + str(device_model))
+				print("\t" + str(device_groups))
+				print("\t" + str(board_serial))
+				print("\t" + str(uuid) + "\n")
+	elif choice == "2":
+		for item in items:
+			if item['device-model'] in ('vbond', 'vsmart', 'vmanage'):
+				hostname = item['host-name']
+				system_ip = item['system-ip']
+				reachability = item['reachability']
+				print(
+						hostname + " - " +
+						system_ip + " - " +
+						reachability
+				)
+	elif choice == "3":
+		first_list = []
+		for item in items:
+			hostname = item['host-name']
+			system_ip = item['system-ip']
+			reachability = item['reachability']
+			device_type = item['device-type']
+			device_model = item['device-model']
+			device_groups = str(item['device-groups']).strip('[\'\"').strip(
+				'\"\']')
+			uuid = item['uuid']
+			data = str(
+					hostname + " - " +
+					system_ip + " - " +
+					reachability + " - " +
+					device_type + " - " +
+					device_model + " - " +
+					uuid + " - " +
+					device_groups
+					)
+			first_list.append(data)
+		with open('sd-wan_file.txt', 'w') as c:
+			for f in first_list:
+				c.write(f + '\n')
+		print("The config has been saved to your local jumpbox folder" +
+		      "as 'sd-wan_file.txt'.")
+		the_input = input(
+				"Would you like to see the config file now? Y/N: "
+				)
+		if the_input == 'Y':
+			with open('sd-wan_file.txt', 'r') as content_file:
+				content = content_file.read()
+				for c in content.splitlines():
+					print(c)
+
+###############################################################################
+
+if __name__ == "__main__":
+	main()
